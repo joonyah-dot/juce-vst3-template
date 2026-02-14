@@ -1,0 +1,22 @@
+# Build output
+build/
+out/
+.vs/
+*.sln
+*.vcxproj*
+*.user
+
+# Plugin binaries / artifacts
+*.vst3
+*.dll
+*.pdb
+*.exp
+*.lib
+
+# OS/editor noise
+Thumbs.db
+.DS_Store
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json

@@ -1,0 +1,19 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Build VST3 (Debug) + Install to System VST3 Folder",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "cmake --build build --config Debug --target PLUGIN_NAME_VST3; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; Copy-Item -Recurse -Force \"${workspaceFolder}\\build\\PLUGIN_NAME_artefacts\\Debug\\VST3\\PLUGIN_NAME.vst3\" \"C:\\Program Files\\Common Files\\VST3\\\""
+      ],
+      "problemMatcher": [],
+      "group": "build"
+    }
+  ]
+}
