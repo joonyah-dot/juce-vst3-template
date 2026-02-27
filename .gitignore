@@ -20,3 +20,7 @@ Thumbs.db
 # VS Code settings (keep tasks in repo, ignore everything else)
 .vscode/*
 !.vscode/tasks.json
+
+# Harness-generated content
+tests/_generated/
+artifacts/

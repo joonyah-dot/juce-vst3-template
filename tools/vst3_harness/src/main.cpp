@@ -26,7 +26,8 @@ struct RenderCase
 {
     int warmupMs = 50;
     std::optional<double> renderSeconds;
-    std::map<std::string, float> params;
+    std::map<std::string, float> paramsByName;
+    std::map<int, float> paramsByIndex;
 };
 
 struct LevelMetrics
@@ -42,7 +43,7 @@ void printUsage()
         << "  vst3_harness --help\n"
         << "  vst3_harness --version\n"
         << "  vst3_harness dump-params --plugin <path_to.vst3>\n"
-        << "  vst3_harness render --plugin <path.vst3> --in <dry.wav> --outdir <dir> --sr <hz> --bs <samples> --ch <channels> --case <case.json>\n"
+        << "  vst3_harness render --plugin <path.vst3> --in <dry.wav> --outdir <dir> --sr <hz> --bs <samples> --ch <channels> [--case <case.json>]\n"
         << "  vst3_harness analyze --dry <dry.wav> --wet <wet.wav> --outdir <dir> [--auto-align] [--null]\n";
 }
 
@@ -124,6 +125,16 @@ bool getRequiredOption(const OptionMap& options,
         error = "Missing required option --" + juce::String(key);
         return false;
     }
+
+    outValue = it->second;
+    return true;
+}
+
+bool getOptionalOption(const OptionMap& options, const char* key, juce::String& outValue)
+{
+    const auto it = options.find(key);
+    if (it == options.end())
+        return false;
 
     outValue = it->second;
     return true;
@@ -279,6 +290,99 @@ bool parseNumericVar(const juce::var& value, double& outValue)
     return false;
 }
 
+bool parseNormalizedValue(const juce::var& value,
+                          const juce::String& context,
+                          float& outValue,
+                          juce::String& error)
+{
+    double normalized = 0.0;
+    if (!parseNumericVar(value, normalized))
+    {
+        error = context + " must be numeric";
+        return false;
+    }
+
+    if (normalized < 0.0 || normalized > 1.0)
+    {
+        error = context + " must be within [0, 1]";
+        return false;
+    }
+
+    outValue = static_cast<float>(normalized);
+    return true;
+}
+
+bool parseParamsByNameObject(const juce::var& value,
+                             std::map<std::string, float>& outParamsByName,
+                             juce::String& error)
+{
+    auto* paramsObject = value.getDynamicObject();
+    if (paramsObject == nullptr)
+    {
+        error = "paramsByName must be a JSON object of name -> normalized value";
+        return false;
+    }
+
+    const auto& properties = paramsObject->getProperties();
+    for (int i = 0; i < properties.size(); ++i)
+    {
+        const juce::String parameterName = properties.getName(i).toString();
+        const juce::var parameterValue = properties.getValueAt(i);
+
+        float normalized = 0.0f;
+        if (!parseNormalizedValue(parameterValue,
+                                  "Parameter value for '" + parameterName + "'",
+                                  normalized,
+                                  error))
+        {
+            return false;
+        }
+
+        outParamsByName[parameterName.toLowerCase().toStdString()] = normalized;
+    }
+
+    return true;
+}
+
+bool parseParamsByIndexObject(const juce::var& value,
+                              std::map<int, float>& outParamsByIndex,
+                              juce::String& error)
+{
+    auto* paramsObject = value.getDynamicObject();
+    if (paramsObject == nullptr)
+    {
+        error = "paramsByIndex must be a JSON object of index -> normalized value";
+        return false;
+    }
+
+    const auto& properties = paramsObject->getProperties();
+    for (int i = 0; i < properties.size(); ++i)
+    {
+        const juce::String indexText = properties.getName(i).toString();
+        const juce::var parameterValue = properties.getValueAt(i);
+
+        int index = 0;
+        if (!parseIntStrict(indexText.toStdString(), index) || index < 0)
+        {
+            error = "Parameter index must be a non-negative integer key, got '" + indexText + "'";
+            return false;
+        }
+
+        float normalized = 0.0f;
+        if (!parseNormalizedValue(parameterValue,
+                                  "Parameter value for index " + juce::String(index),
+                                  normalized,
+                                  error))
+        {
+            return false;
+        }
+
+        outParamsByIndex[index] = normalized;
+    }
+
+    return true;
+}
+
 bool parseRenderCaseFile(const juce::File& caseFile, RenderCase& renderCase, juce::String& error)
 {
     if (!caseFile.existsAsFile())
@@ -324,36 +428,23 @@ bool parseRenderCaseFile(const juce::File& caseFile, RenderCase& renderCase, juc
         renderCase.renderSeconds = renderSeconds;
     }
 
-    if (rootObject->hasProperty("params"))
+    if (rootObject->hasProperty("paramsByName")
+        && !parseParamsByNameObject(rootObject->getProperty("paramsByName"), renderCase.paramsByName, error))
     {
-        auto* paramsObject = rootObject->getProperty("params").getDynamicObject();
-        if (paramsObject == nullptr)
-        {
-            error = "params must be a JSON object of name -> normalized value";
-            return false;
-        }
+        return false;
+    }
 
-        const auto& properties = paramsObject->getProperties();
-        for (int i = 0; i < properties.size(); ++i)
-        {
-            const juce::String parameterName = properties.getName(i).toString();
-            const juce::var parameterValue = properties.getValueAt(i);
+    // Backward-compatibility alias for older case files.
+    if (rootObject->hasProperty("params")
+        && !parseParamsByNameObject(rootObject->getProperty("params"), renderCase.paramsByName, error))
+    {
+        return false;
+    }
 
-            double normalized = 0.0;
-            if (!parseNumericVar(parameterValue, normalized))
-            {
-                error = "Parameter value must be numeric for: " + parameterName;
-                return false;
-            }
-
-            if (normalized < 0.0 || normalized > 1.0)
-            {
-                error = "Parameter value must be within [0, 1] for: " + parameterName;
-                return false;
-            }
-
-            renderCase.params[parameterName.toLowerCase().toStdString()] = static_cast<float>(normalized);
-        }
+    if (rootObject->hasProperty("paramsByIndex")
+        && !parseParamsByIndexObject(rootObject->getProperty("paramsByIndex"), renderCase.paramsByIndex, error))
+    {
+        return false;
     }
 
     return true;
@@ -377,17 +468,31 @@ bool loadVst3Description(juce::AudioPluginFormatManager& manager,
         return false;
     }
 
-    juce::OwnedArray<juce::PluginDescription> foundTypes;
-    format->findAllTypesForFile(foundTypes, pluginPath.getFullPathName());
+    juce::StringArray scanCandidates;
 
-    if (foundTypes.isEmpty())
+    if (pluginPath.isDirectory() && pluginPath.hasFileExtension(".vst3"))
     {
-        error = "No VST3 plugin types found in: " + pluginPath.getFullPathName();
-        return false;
+        juce::Array<juce::File> nestedPluginBinaries;
+        pluginPath.findChildFiles(nestedPluginBinaries, juce::File::findFiles, true, "*.vst3");
+        for (const auto& nestedFile : nestedPluginBinaries)
+            scanCandidates.addIfNotAlreadyThere(nestedFile.getFullPathName());
     }
 
-    outDescription = *foundTypes.getFirst();
-    return true;
+    scanCandidates.addIfNotAlreadyThere(pluginPath.getFullPathName());
+
+    for (const auto& candidate : scanCandidates)
+    {
+        juce::OwnedArray<juce::PluginDescription> foundTypes;
+        format->findAllTypesForFile(foundTypes, candidate);
+        if (!foundTypes.isEmpty())
+        {
+            outDescription = *foundTypes.getFirst();
+            return true;
+        }
+    }
+
+    error = "No VST3 plugin types found in: " + pluginPath.getFullPathName();
+    return false;
 }
 
 std::unique_ptr<juce::AudioPluginInstance> createVst3Instance(const juce::File& pluginPath,
@@ -481,6 +586,34 @@ bool applyParameterMapByName(juce::AudioPluginInstance& instance,
             error = "Could not find plugin parameter named: " + juce::String(nameLowercase);
             return false;
         }
+    }
+
+    return true;
+}
+
+bool applyParameterMapByIndex(juce::AudioPluginInstance& instance,
+                              const std::map<int, float>& parameterValues,
+                              juce::String& error)
+{
+    auto& parameters = instance.getParameters();
+
+    for (const auto& [index, normalizedValue] : parameterValues)
+    {
+        if (index < 0 || index >= parameters.size())
+        {
+            error = "Parameter index out of range: " + juce::String(index)
+                  + " (num parameters: " + juce::String(parameters.size()) + ")";
+            return false;
+        }
+
+        auto* parameter = parameters.getUnchecked(index);
+        if (parameter == nullptr)
+        {
+            error = "Plugin parameter at index " + juce::String(index) + " is null";
+            return false;
+        }
+
+        parameter->setValueNotifyingHost(normalizedValue);
     }
 
     return true;
@@ -713,7 +846,6 @@ int runRender(const OptionMap& options)
     if (!getRequiredOption(options, "plugin", pluginPathText, error)
         || !getRequiredOption(options, "in", inputPathText, error)
         || !getRequiredOption(options, "outdir", outDirText, error)
-        || !getRequiredOption(options, "case", casePathText, error)
         || !getRequiredIntOption(options, "sr", sampleRate, error)
         || !getRequiredIntOption(options, "bs", blockSize, error)
         || !getRequiredIntOption(options, "ch", channels, error))
@@ -727,11 +859,14 @@ int runRender(const OptionMap& options)
     const juce::File pluginPath = resolvePath(pluginPathText);
     const juce::File inputPath = resolvePath(inputPathText);
     const juce::File outDir = resolvePath(outDirText);
-    const juce::File casePath = resolvePath(casePathText);
 
     RenderCase renderCase;
-    if (!parseRenderCaseFile(casePath, renderCase, error))
-        return fail(error);
+    if (getOptionalOption(options, "case", casePathText))
+    {
+        const juce::File casePath = resolvePath(casePathText);
+        if (!parseRenderCaseFile(casePath, renderCase, error))
+            return fail(error);
+    }
 
     AudioData dryAudio;
     if (!readAudioFile(inputPath, dryAudio, error))
@@ -762,7 +897,10 @@ int runRender(const OptionMap& options)
     plugin->setRateAndBufferSizeDetails(static_cast<double>(sampleRate), blockSize);
     plugin->prepareToPlay(static_cast<double>(sampleRate), blockSize);
 
-    if (!applyParameterMapByName(*plugin, renderCase.params, error))
+    if (!applyParameterMapByIndex(*plugin, renderCase.paramsByIndex, error))
+        return fail(error);
+
+    if (!applyParameterMapByName(*plugin, renderCase.paramsByName, error))
         return fail(error);
 
     plugin->reset();

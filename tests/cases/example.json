@@ -6,8 +6,9 @@
   "input": "tests/audio/hats.wav",
   "warmupMs": 50,
   "renderSeconds": 2.0,
-  "params": {
+  "paramsByName": {
     "Drive": 1.0,
     "Mix": 1.0
-  }
+  },
+  "paramsByIndex": {}
 }

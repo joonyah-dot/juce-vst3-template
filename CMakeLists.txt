@@ -6,7 +6,11 @@ project(
 )
 
 add_subdirectory(extern/juce)
-add_subdirectory(tools/vst3_harness)
+
+option(BUILD_VST3_HARNESS "Build VST3 harness CLI" ON)
+if(BUILD_VST3_HARNESS)
+    add_subdirectory(tools/vst3_harness)
+endif()
 
 juce_add_plugin(
     __PLUGIN_NAME__
